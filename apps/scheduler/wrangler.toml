@@ -1,0 +1,10 @@
+name = "automation-studio-scheduler"
+main = "src/index.ts"
+compatibility_date = "2026-10-26"
+workers_dev = true
+[vars]
+STUDIO_TICK_URL = "https://automation-studio-blue.vercel.app/api/internal/tick"
+[triggers]
+crons = ["* * * * *"]
+[observability]
+enabled = true

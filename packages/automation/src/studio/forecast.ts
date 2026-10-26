@@ -1,0 +1,6 @@
+import {integer,type StudioSnapshot,type StudioPolicy,type StudioDecision} from './types';
+import {decideStudio} from './decide';
+import {periodAt} from './schedule';
+export interface StudioForecastRow {at:string;balance:string;decision:StudioDecision}
+/** No expected income is credited; all rows use the same evaluator as the runtime. */
+export function forecastStudio(snapshot:StudioSnapshot,policy:StudioPolicy,timestamps:readonly string[]):StudioForecastRow[]{let s={...snapshot,consumedPeriods:[...snapshot.consumedPeriods]};let previous=integer(snapshot.now);return timestamps.map(at=>{if(integer(at)<previous)throw new Error('Forecast times must be chronological');previous=integer(at);s={...s,now:at,periodSpent:periodAt(policy,at)===periodAt(policy,s.now)?s.periodSpent:'0'};const decision=decideStudio(s,policy);if(decision.allowed){const amount=integer(policy.amount);s={...s,balance:(integer(s.balance)-amount).toString(),allocation:(integer(s.allocation)-amount).toString(),globalSpent:(integer(s.globalSpent)+amount).toString(),lifetimeSpent:(integer(s.lifetimeSpent)+amount).toString(),periodSpent:(integer(s.periodSpent)+amount).toString(),consumedPeriods:[...s.consumedPeriods,decision.periodIndex!]};}return {at,balance:s.balance,decision};});}

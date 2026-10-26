@@ -1,0 +1,38 @@
+{
+  "name": "automation-studio",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "workspaces": [
+    "apps/web"
+  ],
+  "scripts": {
+    "dev": "npm run dev -w @automation-studio/web",
+    "build": "npm run build -w @automation-studio/web",
+    "start": "npm run start -w @automation-studio/web",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit",
+    "test:contracts": "powershell -NoProfile -Command \"& $env:USERPROFILE/.foundry/bin/forge.exe test --root contracts\"",
+    "worker": "tsx apps/worker/src/main.ts"
+  },
+  "dependencies": {
+    "@electric-sql/pglite": "0.5.11",
+    "@radix-ui/react-dialog": "1.3.1",
+    "lucide-react": "1.61.0",
+    "next": "16.4.2",
+    "pg": "8.23.1",
+    "react": "19.3.1",
+    "react-dom": "19.3.1",
+    "viem": "2.57.10"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.64.1",
+    "@types/node": "^24.0.0",
+    "@types/pg": "^8.15.0",
+    "@types/react": "^19.0.0",
+    "@types/react-dom": "^19.0.0",
+    "tsx": "^4.20.0",
+    "typescript": "~5.9.3",
+    "vitest": "5.0.5"
+  }
+}

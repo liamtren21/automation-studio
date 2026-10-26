@@ -1,0 +1,24 @@
+import {afterEach,expect,it} from 'vitest';
+import {createDatabase,type Database} from '../packages/db/src/database';
+import {createStudioDraft,reviseStudioDraft,ensureDemoAccount,loadStudioView} from '../apps/web/src/server/automation/service';
+import {recordConfigurationEvidence} from '../apps/web/src/server/automation/configuration-evidence';
+import {automationOperationData} from '../packages/mezo/src/automation-payload';
+import {automationVaultAbi} from '../packages/mezo/src/automation-abi';
+import {encodeAbiParameters,encodeEventTopics,keccak256} from 'viem';
+const dbs:Database[]=[];afterEach(async()=>{for(const d of dbs.splice(0))await d.close();});
+it('preserves named revision payloads and reports the latest draft without rewriting earlier versions',async()=>{
+ const db=await createDatabase('memory://');dbs.push(db);await db.query("INSERT INTO workspaces(id,mode) VALUES('demo:history','demo')");await ensureDemoAccount(db,'demo:history',100);
+ const input={name:'Original supplier',recipient:'0x2222222222222222222222222222222222222222',amount:'1',budget:'3',startAt:'100',endAt:'1000',intervalSeconds:'60',priority:'1'};
+ const original=await createStudioDraft(db,'demo:history',input);
+ await reviseStudioDraft(db,'demo:history',original.policy.policyId,{...input,name:'New supplier',amount:'2'});
+ const view=await loadStudioView(db,'demo:history');
+ expect(view.rules[0]!.name).toBe('New supplier');
+ expect(view.rules[0]!.revisions.map(r=>[r.version,r.name,r.policy.amount])).toEqual([['1','Original supplier','1000000000000000000'],['2','New supplier','2000000000000000000']]);
+ expect(view.rules[0]!.revisions[0]!.configHash).not.toBe(view.rules[0]!.revisions[1]!.configHash);
+ const p=original.policy,txHash=keccak256('0x01'),blockHash=keccak256('0x02');
+ const transaction=automationOperationData({operation:'configure',owner:'0x1111111111111111111111111111111111111111',vault:p.vault,policy:p});
+ const proof={tx:{from:'0x1111111111111111111111111111111111111111',to:p.vault,input:transaction.data,hash:txHash},receipt:{blockNumber:123n,blockHash,logs:[{address:p.vault,topics:encodeEventTopics({abi:automationVaultAbi,eventName:'PolicyConfigured',args:{policyId:p.policyId,version:1n}}),data:encodeAbiParameters([{type:'bytes32'}],[original.configHash as `0x${string}`])}]},block:{timestamp:200n}};
+ await recordConfigurationEvidence(db,'demo:history',proof);
+ const updated=await loadStudioView(db,'demo:history');expect(updated.rules[0]!.revisions[0]!.activation).toMatchObject({txHash,blockNumber:'123',blockHash,effectiveAt:'200'});
+ await expect(recordConfigurationEvidence(db,'demo:history',{...proof,receipt:{...proof.receipt,logs:[]}})).rejects.toThrow(/event/);
+},20000);

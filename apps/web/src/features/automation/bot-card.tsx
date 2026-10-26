@@ -1,0 +1,22 @@
+'use client';
+import * as Dialog from '@radix-ui/react-dialog';
+import {formatUnits,parseUnits} from 'viem';
+import {useState} from 'react';
+import {botPresentation,frequencyLabel,shortAddress} from './bot-presentation';
+import {date,money,type StudioRule} from './studio-client';
+import {ScheduleSharing} from './sharing';
+import type {LiveIntent} from './transaction-review';
+export function BotCard({rule,onOpen,onStop,busy}:{rule:StudioRule;onOpen:()=>void;onStop:()=>void;busy:boolean}){
+ const info=botPresentation(rule);
+ return <article className="as-rule as-bot-card"><div><span className="as-status">{info.status}</span><h3>{rule.name}</h3><p className="as-bot-amount">{formatUnits(BigInt(rule.policy.amount),18)} MUSD <span>· {frequencyLabel(rule.policy.intervalSeconds)}</span></p><p>To <span title={rule.policy.recipient}>{shortAddress(rule.policy.recipient)}</span></p><p className="as-small">{info.nextAt?'Next payment: '+date(info.nextAt):info.message}</p></div><div className="as-actions"><button className="as-button" onClick={onOpen}>{rule.status==='draft'?'Continue setup':'View details'}</button>{rule.status==='active'&&<button className="as-button" disabled={busy} onClick={onStop}>Stop payments</button>}</div></article>;
+}
+export function BotDetails({rule,mode,onClose,onEdit,onStop,onReview}:{rule:StudioRule;mode:'demo'|'live';onClose:()=>void;onEdit:()=>void;onStop:()=>void;onReview:(intent:LiveIntent)=>void}){
+ const info=botPresentation(rule),stopped=rule.status==='revoked',allocation=BigInt(rule.snapshot.allocation);
+ return <Dialog.Root open onOpenChange={open=>{if(!open)onClose();}}><Dialog.Portal><Dialog.Overlay className="as-dialog-overlay"/><Dialog.Content className="as-dialog as-bot-details"><Dialog.Title>{rule.name}</Dialog.Title><Dialog.Description>{info.status} · {info.message}</Dialog.Description><dl className="as-definition"><div><dt>Each payment</dt><dd>{formatUnits(BigInt(rule.policy.amount),18)} MUSD</dd></div><div><dt>Recipient</dt><dd className="as-address">{rule.policy.recipient}</dd></div><div><dt>Frequency</dt><dd>{frequencyLabel(rule.policy.intervalSeconds)}</dd></div>{info.nextAt&&<div><dt>Next payment</dt><dd>{date(info.nextAt)}</dd></div>}<div><dt>Schedule ends</dt><dd>{date(rule.policy.endAt)}</dd></div><div><dt>Paid so far</dt><dd>{money(rule.snapshot.lifetimeSpent)} MUSD</dd></div><div><dt>Total budget</dt><dd>{money(rule.policy.lifetimeCap)} MUSD</dd></div><div><dt>Set aside for this bot</dt><dd>{money(rule.snapshot.allocation)} MUSD</dd></div></dl>{mode==='live'&&rule.status!=='draft'&&allocation>0n&&<details><summary>Manage money set aside</summary><BudgetRelease rule={rule} onReview={onReview}/></details>}<div className="as-actions"><button className="as-button as-primary" onClick={onClose}>Done</button>{!stopped&&<button className="as-button" onClick={onEdit}>Edit payment</button>}{rule.status==='active'&&<button className="as-button" onClick={onStop}>Stop payments</button>}</div><details><summary>Share schedule</summary><ScheduleSharing key={rule.policy.policyId} rules={[rule]} mode={mode} selectedId={rule.policy.policyId}/></details>{!!rule.revisions?.length&&<details><summary>Change history</summary><ul>{rule.revisions.map((r,i)=><li key={r.version}>{i===0?'Payment created':'Payment updated'}{r.createdAt?' · '+date(r.createdAt):''}</li>)}</ul></details>}</Dialog.Content></Dialog.Portal></Dialog.Root>;
+}
+
+export function BudgetRelease({rule,onReview}:{rule:StudioRule;onReview:(intent:LiveIntent)=>void}){
+ const [amount,setAmount]=useState(formatUnits(BigInt(rule.snapshot.allocation),18));
+ let valid=false;try{const units=/^\d+(\.\d{1,18})?$/.test(amount)?parseUnits(amount,18):0n;valid=units>0n&&units<=BigInt(rule.snapshot.allocation);}catch{}
+ return <form className="as-form" onSubmit={e=>{e.preventDefault();if(valid)onReview({operation:'release',policyId:rule.policy.policyId,amount});}}><p>Move unused money back to your available balance. Future payments need enough money left in this bot’s budget.</p><label>Amount to release (MUSD)<input inputMode="decimal" value={amount} onChange={e=>setAmount(e.target.value)}/><small>Up to {formatUnits(BigInt(rule.snapshot.allocation),18)} MUSD available.</small></label><button className="as-button" disabled={!valid}>Release unused budget</button>{!valid&&<p className="as-small">Enter an amount greater than zero, up to the money set aside.</p>}</form>;
+}

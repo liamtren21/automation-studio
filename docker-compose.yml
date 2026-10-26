@@ -1,0 +1,44 @@
+name: automation-studio
+x-studio-env: &studio-env
+  DATABASE_URL: postgresql://studio:${POSTGRES_PASSWORD:?Set a private URL-safe password}@postgres:5432/automation_studio
+  STUDIO_ORIGIN: ${STUDIO_ORIGIN:-http://localhost:3211}
+  MEZO_RPC_URL: ${MEZO_RPC_URL:-https://rpc.test.mezo.org}
+  STUDIO_AUTOMATION_CONFIRMATIONS: 2
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: automation_studio
+      POSTGRES_USER: studio
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set a private URL-safe password}
+    volumes:
+      - studio_database:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U studio -d automation_studio"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+  web:
+    build: .
+    image: automation-studio:local
+    environment:
+      <<: *studio-env
+    ports:
+      - "127.0.0.1:3211:3211"
+    depends_on:
+      postgres:
+        condition: service_healthy
+  worker:
+    image: automation-studio:local
+    build: .
+    profiles: [execution]
+    command: ["npm", "run", "worker"]
+    environment:
+      <<: *studio-env
+      STUDIO_AUTOMATION_EXECUTION: ${STUDIO_AUTOMATION_EXECUTION:-false}
+      STUDIO_EXECUTOR_PRIVATE_KEY: ${STUDIO_EXECUTOR_PRIVATE_KEY:-}
+    depends_on:
+      postgres:
+        condition: service_healthy
+volumes:
+  studio_database:

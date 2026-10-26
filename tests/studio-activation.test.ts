@@ -1,0 +1,12 @@
+import {it,expect} from 'vitest';
+import {createElement} from 'react';
+import {renderToStaticMarkup} from 'react-dom/server';
+import {ActivationSteps} from '../apps/web/src/features/automation/activation-steps';
+import type {StudioRule,StudioView} from '../apps/web/src/features/automation/studio-client';
+const account={balance:'100',committedBills:'10',buffer:'10',allocations:{},now:'100',protectionExpiresAt:'200',protectionSourceHash:'0xaa'};
+const view={mode:'live',account,source:{sourceHash:'0xaa'},runtimeHealth:{authorized:true,gasBalance:'10',executionEnabled:true}} as unknown as StudioView;
+const rule={status:'active',policy:{policyId:'0x1',amount:'10',lifetimeCap:'50'},snapshot:{allocation:'0',lifetimeSpent:'0'}} as unknown as StudioRule;
+const render=(r=rule,v=view)=>renderToStaticMarkup(createElement(ActivationSteps,{rule:r,view:v,onReview:()=>{},onSettings:()=>{}}));
+it('continues active permissions with zero allocation to budget review',()=>{const html=render();expect(html).toContain('Review bot budget in OKX');expect(html).not.toContain('Review permission in OKX');});
+it('offers only permission approval for a draft while protection is current',()=>{const html=render({...rule,status:'draft'});expect(html).toContain('Review permission in OKX');expect(html).not.toContain('Review bot budget in OKX');});
+it('requires protection review before permission or allocation',()=>{const html=render({...rule,status:'draft'},{...view,source:{...view.source!,sourceHash:'0xbb'}});expect(html).toContain('Review protected funds');expect(html).not.toContain('Review permission in OKX');expect(html).not.toContain('Review bot budget in OKX');});

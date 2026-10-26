@@ -1,0 +1,6 @@
+import {NextResponse,type NextRequest} from 'next/server';
+import {allowedOrigins} from './origin';
+export function errorResponse(error:unknown){const message=error instanceof Error?error.message:'Request failed.';const explicit=(error as {status?:number})?.status;const code=[403,409,429].includes(explicit||0)?explicit!:/sign in|owner wallet/.test(message)?401:/not found/i.test(message)?404:400;console.error('[Automation Studio]',message);return NextResponse.json({error:message},{status:code});}
+export function modeOf(value:unknown):'demo'|'live' {if(value==='demo'||value===undefined||value===null)return 'demo';if(value==='live')return 'live';throw new Error('Invalid workspace mode.');}
+export function checkOrigin(req:NextRequest){if(!allowedOrigins().includes(req.headers.get('origin')||''))throw new Error('Untrusted request origin.');if(!req.headers.get('content-type')?.includes('application/json'))throw new Error('JSON request required.');}
+export async function readBody(req:NextRequest){checkOrigin(req);const text=await req.text();if(text.length>12000)throw new Error('Request too large.');const body=JSON.parse(text);if(!body||Array.isArray(body)||typeof body!=='object')throw new Error('Invalid JSON request.');return body;}

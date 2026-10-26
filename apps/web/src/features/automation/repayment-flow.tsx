@@ -1,0 +1,47 @@
+'use client';
+import {useCallback,useEffect,useState} from 'react';
+import {formatUnits} from 'viem';
+import {useOkxProvider} from '../../components/okx-provider';
+import {ensureSetupChain,assertSetupWallet} from '../../components/setup-wallet';
+import {validateOwnerRepayment} from '../../../../../packages/mezo/src/repayment';
+import type {RepaymentHandoff,SignedRepayment} from '../../server/automation/repayment';
+import type {StudioView} from './studio-client';
+
+async function api(action?:string,body:Record<string,unknown>={}){const r=await fetch('/api/automation/repayment',action?{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action,...body})}:{cache:'no-store'});const data=await r.json();if(!r.ok)throw new Error(data.error??'Repayment request failed.');return data;}
+export function RepaymentFlow({view,onReviewWithdraw,onUpdated}:{view:StudioView;onReviewWithdraw:(amount:string,handoffId?:string)=>void;onUpdated:()=>Promise<void>}){
+ const provider=useOkxProvider(),owner=view.owner??view.account?.owner;
+ const [handoffs,setHandoffs]=useState<RepaymentHandoff[]>([]),[amount,setAmount]=useState('1'),[withdrawHash,setWithdrawHash]=useState(''),[repayHash,setRepayHash]=useState(''),[prepared,setPrepared]=useState<SignedRepayment|null>(null),[busy,setBusy]=useState(false),[error,setError]=useState(''),[uncertain,setUncertain]=useState(false);
+ const active=handoffs.find(i=>i.status!=='confirmed'&&i.status!=='cancelled'),latest=active??handoffs.find(i=>i.status!=='cancelled');
+ const storageKey='studio:owner-repay:'+owner?.toLowerCase()+':'+active?.id;
+ const refresh=useCallback(async()=>{if(view.mode==='live'&&owner){const result=await api();setHandoffs(result.handoffs);}},[owner,view.mode]);
+ useEffect(()=>{void refresh().catch(e=>setError(e.message));},[refresh]);
+ useEffect(()=>{setPrepared(active?.prepared??null);setRepayHash(active?.repaymentHash??'');setWithdrawHash(active?.withdrawalHash??'');try{const stored=JSON.parse(localStorage.getItem(storageKey)??'null');setUncertain(Boolean(stored?.uncertain));if(stored?.hash)setRepayHash(stored.hash);}catch{setUncertain(false);}},[active?.id,active?.prepared?.signature,active?.repaymentHash,storageKey]);
+ async function run(action:string,body:Record<string,unknown>={}){setBusy(true);setError('');try{const result=await api(action,{id:active?.id,...body});if(action==='prepare')setPrepared(result);if(action==='reconcile'&&result.status==='withdrawn'){localStorage.removeItem(storageKey);setRepayHash('');setUncertain(false);setPrepared(null);}await refresh();await onUpdated();return result;}catch(e){setError(e instanceof Error?e.message:'Could not complete this step.');}finally{setBusy(false);}}
+ async function sign(){setBusy(true);setError('');let requested=false;try{
+  if(!active||!prepared||!provider||!owner||uncertain||repayHash)throw new Error('Recover the existing wallet request before signing again.');
+  const current=(await api()).handoffs.find((h:RepaymentHandoff)=>h.id===active.id) as RepaymentHandoff|undefined;
+  if(!current||current.status!=='prepared'||current.repaymentHash||current.owner.toLowerCase()!==owner.toLowerCase()||current.amountBaseUnits!==prepared.amountBaseUnits||current.prepared?.signature!==prepared.signature||current.prepared?.nonce!==prepared.nonce||prepared.id!==current.id)throw new Error('Repayment review changed. Prepare again.');
+  const data=validateOwnerRepayment(prepared.prepared,owner,current.amountBaseUnits);
+  if(!Number.isSafeInteger(prepared.nonce)||prepared.nonce<0||!/^[a-f0-9]{64}$/.test(prepared.signature)||!/^[1-9][0-9]*$/.test(prepared.gas)||!/^[1-9][0-9]*$/.test(prepared.gasPrice)||BigInt(prepared.gas)*BigInt(prepared.gasPrice)>BigInt(prepared.prepared.snapshot.ownerGasBalanceBaseUnits))throw new Error('Invalid repayment nonce or gas review.');
+  await ensureSetupChain(provider);await assertSetupWallet(provider,owner);
+  validateOwnerRepayment(prepared.prepared,owner,current.amountBaseUnits);
+  localStorage.setItem(storageKey,JSON.stringify({uncertain:true}));setUncertain(true);requested=true;
+  const tx=await provider.request({method:'eth_sendTransaction',params:[{from:owner,to:prepared.prepared.to,data,value:'0x0',chainId:'0x7b7b',nonce:'0x'+prepared.nonce.toString(16),gas:'0x'+BigInt(prepared.gas).toString(16),gasPrice:'0x'+BigInt(prepared.gasPrice).toString(16)}]});
+  if(typeof tx!=='string'||!/^0x[0-9a-f]{64}$/i.test(tx))throw new Error('Check OKX activity for the existing repayment hash.');
+  setRepayHash(tx);localStorage.setItem(storageKey,JSON.stringify({hash:tx}));await api('submit',{id:active.id,txHash:tx});await refresh();
+ }catch(e){if((e as {code?:number})?.code===4001){setUncertain(false);localStorage.removeItem(storageKey);}setError((e instanceof Error?e.message:'Wallet request failed.')+(requested?' Check OKX activity before any retry.':''));}finally{setBusy(false);}}
+ if(view.mode!=='live')return <section className="as-card"><h3>Owner Trove repayment</h3><p className="as-small">Choose Mezo Testnet to withdraw unallocated MUSD and review a separate repayment from your borrower wallet.</p></section>;
+ return <section className="as-card"><h3>Withdraw, then repay your Trove</h3><p className="as-small">Two separate owner signatures: first withdraw unallocated MUSD, then repay from the same wallet that owns the Trove. Executors cannot repay. Keep test BTC in your wallet for fees.</p>
+ {!active&&<div className="as-form"><label>Amount (MUSD)<input value={amount} inputMode="decimal" onChange={e=>setAmount(e.target.value)}/></label><button className="as-button" disabled={busy||!view.account||!owner} onClick={()=>void run('start',{amount})}>Plan withdrawal and repayment</button></div>}
+ {active&&<><p><strong>{active.amount} MUSD</strong> · {active.status.replaceAll('_',' ')}</p><ol><li>Withdraw to your owner wallet. Allocated payments, bills and your cash cushion stay protected.</li><li>Confirm the withdrawal receipt with two canonical confirmations.</li><li>Review a fresh partial Trove repayment and sign separately in OKX.</li></ol>
+ {active.status==='awaiting_withdrawal'&&<div className="as-form"><button className="as-button" disabled={busy} onClick={()=>onReviewWithdraw(active.amount,active.id)}>Review withdrawal in owner wallet</button>{active.withdrawalNonce===undefined&&<button className="as-button" disabled={busy} onClick={()=>void run('cancel')}>Cancel before wallet review</button>}<label>Existing withdrawal transaction hash<input value={withdrawHash} onChange={e=>setWithdrawHash(e.target.value)} placeholder="0x…"/></label><button className="as-button" disabled={busy||!/^0x[0-9a-f]{64}$/i.test(withdrawHash)} onClick={()=>void run('link_withdraw',{txHash:withdrawHash})}>Verify withdrawal receipt</button></div>}
+ {['withdrawn','prepared'].includes(active.status)&&!repayHash&&!uncertain&&<button className="as-button" disabled={busy} onClick={()=>void run('prepare')}>{prepared?'Refresh repayment review':'Prepare owner repayment'}</button>}
+ {prepared&&active.status==='prepared'&&!repayHash&&!uncertain&&<><dl className="as-definition"><div><dt>Borrower wallet</dt><dd className="as-address">{owner}</dd></div><div><dt>Remaining debt estimate</dt><dd>{formatUnits(BigInt(prepared.prepared.economics.remainingDebtBaseUnits),18)} MUSD</dd></div><div><dt>Review expiry</dt><dd>{new Date(prepared.prepared.expiresAt*1000).toLocaleTimeString()}</dd></div><div><dt>Estimated maximum gas cost</dt><dd>{formatUnits(BigInt(prepared.gas)*BigInt(prepared.gasPrice),18)} BTC</dd></div></dl><details><summary>Repayment transaction details</summary><p className="as-address">To: {prepared.prepared.to}</p><p className="as-address">Data: {prepared.prepared.data}</p><p>Mezo Testnet (31611) · 0 BTC value · Owner nonce {prepared.nonce} · No token approval</p></details><button className="as-button as-primary" disabled={busy||!provider} onClick={()=>void sign()}>Review separate repayment in OKX</button></>}
+ {(uncertain||repayHash||active.status==='pending')&&<div className="as-form"><p className="as-small">Recover the existing repayment from OKX activity. A submitted transaction is pending until its exact receipt and MUSD burn are verified.</p><label>Existing owner repayment hash<input value={repayHash} onChange={e=>setRepayHash(e.target.value)} placeholder="0x…"/></label><button className="as-button" disabled={busy||!/^0x[0-9a-f]{64}$/i.test(repayHash)} onClick={()=>void run('submit',{txHash:repayHash}).then(result=>{if(result)void run('reconcile');})}>Register and verify repayment</button></div>}
+ </>}
+ {latest?.status==='confirmed'&&<p role="status">Withdrawal and separate owner repayment confirmed. Recorded debt: {formatUnits(BigInt(latest.debtAfter?.debtBaseUnits??'0'),18)} MUSD.</p>}
+ {latest?.withdrawalHash&&<p className="as-address">Withdrawal: {latest.withdrawalHash}</p>}{latest?.repaymentHash&&<p className="as-address">Owner repayment: {latest.repaymentHash}</p>}
+ {latest?.failedRepayments?.length? <p className="as-small">An earlier owner repayment reverted with a canonical receipt. Its hash is retained in the handoff; prepare a fresh repayment without withdrawing again.</p>:null}
+ <p className="as-small">Linked receipts show two actions in order. MUSD is fungible; this link does not prove which funds paid the debt. Wallet balance changes are not repayment proof.</p><p aria-live="polite" className={error?'as-error':'as-small'}>{error||(busy?'Checking this step…':'')}</p>
+ </section>;
+}

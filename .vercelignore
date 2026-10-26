@@ -1,0 +1,13 @@
+**/node_modules/**
+**/.next*/**
+**/.data/**
+**/.git/**
+**/.env*
+**/*.tsbuildinfo
+contracts/out/**
+contracts/cache/**
+contracts/lib/openzeppelin-contracts/**
+test-results/**
+playwright-report/**
+docs/*.png
+.env.deployment.local
